@@ -1,0 +1,28 @@
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import { ZodError } from "zod";
+import auth from "./routes/auth.js";
+import items from "./routes/items.js";
+import categories from "./routes/categories.js";
+import orders from "./routes/orders.js";
+import dashboard from "./routes/dashboard.js";
+import uploads from "./routes/uploads.js";
+import accounts from "./routes/accounts.js";
+import { join } from "node:path";
+if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is required");
+const app = express();
+app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? "http://localhost:5173" }));
+app.use(express.json());
+app.use("/uploads", express.static(join(process.cwd(), "uploads")));
+app.get("/api/health", (_req,res) => res.json({ ok: true }));
+app.use("/api/auth", auth); app.use("/api/items", items); app.use("/api/categories", categories);
+app.use("/api/orders", orders); app.use("/api/dashboard", dashboard);
+app.use("/api/accounts", accounts);
+app.use("/api/uploads", uploads);
+app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error instanceof ZodError) return res.status(400).json({ error: "Invalid input", details: error.flatten() });
+  if ((error as { code?: string }).code === "23505") return res.status(409).json({ error: "This value already exists" });
+  const status=(error as {status?:number}).status ?? 500; console.error(error); res.status(status).json({ error: (error as Error).message || "Something went wrong" });
+});
+app.listen(Number(process.env.PORT ?? 4000), () => console.log("API listening"));

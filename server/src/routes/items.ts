@@ -1,0 +1,15 @@
+import { Router } from "express";
+import { z } from "zod";
+import { pool } from "../db/pool.js";
+import { requireAuth, requireRole } from "../middleware/auth.js";
+const router = Router(); router.use(requireAuth);
+const nullableText = z.string().trim().max(500).nullable().optional();
+const imageUrl = z.string().trim().max(500).refine((value) => value.startsWith("/uploads/") || /^https?:\/\//.test(value), "Image URL is invalid").nullable().optional();
+const itemSchema = z.object({ name: z.string().trim().min(1).max(120), categoryId: z.string().uuid().nullable().optional(), description: nullableText, pricePaise: z.number().int().min(0), imageUrl, isVeg: z.boolean().default(true), isAvailable: z.boolean().default(true), taxRateBps: z.number().int().min(0).max(10000).default(0) });
+const select = `SELECT m.id,m.name,m.category_id AS "categoryId",c.name AS "categoryName",m.description,m.price_paise AS "pricePaise",m.image_url AS "imageUrl",m.is_veg AS "isVeg",m.is_available AS "isAvailable",m.tax_rate_bps AS "taxRateBps",m.archived_at AS "archivedAt" FROM menu_items m LEFT JOIN categories c ON c.id=m.category_id`;
+router.get("/", async (req, res, next) => { try { const includeArchived = req.query.includeArchived === "true"; const r = await pool.query(`${select} ${includeArchived ? "" : "WHERE m.archived_at IS NULL"} ORDER BY m.name`); res.json(r.rows); } catch (e) { next(e); } });
+router.post("/", requireRole("OWNER"), async (req, res, next) => { try { const x = itemSchema.parse(req.body); const r = await pool.query(`INSERT INTO menu_items(name,category_id,description,price_paise,image_url,is_veg,is_available,tax_rate_bps) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`, [x.name,x.categoryId ?? null,x.description ?? null,x.pricePaise,x.imageUrl ?? null,x.isVeg,x.isAvailable,x.taxRateBps]); const created = await pool.query(`${select} WHERE m.id=$1`, [r.rows[0].id]); res.status(201).json(created.rows[0]); } catch (e) { next(e); } });
+router.put("/:id", requireRole("OWNER"), async (req, res, next) => { try { const x = itemSchema.parse(req.body); const r = await pool.query(`UPDATE menu_items SET name=$1,category_id=$2,description=$3,price_paise=$4,image_url=$5,is_veg=$6,is_available=$7,tax_rate_bps=$8,updated_at=now() WHERE id=$9 AND archived_at IS NULL RETURNING id`, [x.name,x.categoryId ?? null,x.description ?? null,x.pricePaise,x.imageUrl ?? null,x.isVeg,x.isAvailable,x.taxRateBps,req.params.id]); if (!r.rowCount) return res.status(404).json({ error: "Item not found" }); const updated = await pool.query(`${select} WHERE m.id=$1`, [req.params.id]); res.json(updated.rows[0]); } catch (e) { next(e); } });
+router.delete("/:id", requireRole("OWNER"), async (req, res, next) => { try { const r = await pool.query("UPDATE menu_items SET archived_at=now(), is_available=false WHERE id=$1 AND archived_at IS NULL", [req.params.id]); if (!r.rowCount) return res.status(404).json({ error: "Item not found" }); res.status(204).end(); } catch (e) { next(e); } });
+export default router;
+
